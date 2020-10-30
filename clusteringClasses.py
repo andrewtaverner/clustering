@@ -4,7 +4,6 @@ Created on Aug 26, 2017
 @author: PiTav
 
 This is the new version of this script
-in the finalizedForPub folder
 ''' 
 
 import functionsForClustering as clust
@@ -86,7 +85,25 @@ class protein(object):
         intronPositions = intronPositions.astype(float)
         intronPositions -= betweenCodons
         self.intronPositions = intronPositions
-        
+    
+    def addPopulationData(self,whichSpecies,populationSeqHolder):
+        # whichSpecies 1 = first species; 2 = second species; 3 = out group
+        tempHolder = dict()
+        for currKey in populationSeqHolder:
+            try:
+                tempHolder[currKey] = populationSeqHolder[currKey].seq
+            except AttributeError:
+                try:
+                    tempHolder[currKey] = Seq.Seq(populationSeqHolder[currKey])
+                except TypeError:
+                    tempHolder[currKey] = populationSeqHolder[currKey]
+        if whichSpecies == 1:
+            self.speciesOnePopHolder = tempHolder
+        if whichSpecies == 2:
+            self.speciesTwoPopHolder = tempHolder
+        if whichSpecies == 3:
+            self.speciesOutPopHolder = tempHolder
+    
     def setDivergenceList(self,DNList,DSList):
         self.DNLists = DNList
         self.DSLists = DSList
@@ -127,9 +144,9 @@ class protein(object):
         temp_norm = clust.analyticalNormSameMut(len(self.DSLists),self.seqLength/3)
         self.clusteringHolder['DSDS'] = clusteringObject(temp_data,temp_norm)
         
-        #temp_data = clust.clusteringDifferentMutation(self.DSLists,self.DNLists)
-        #temp_norm = clust.analyticalNormDiffMut(len(self.DSLists),len(self.DNLists),self.seqLength/3)
-        #self.clusteringHolder['DNDS'] = clusteringObject(temp_data,temp_norm)
+        temp_data = clust.clusteringDifferentMutation(self.DSLists,self.DNLists)
+        temp_norm = clust.analyticalNormDiffMut(len(self.DSLists),len(self.DNLists),self.seqLength/3)
+        self.clusteringHolder['DNDS'] = clusteringObject(temp_data,temp_norm)
         
         result = clust.variantsByParsimony(self.firstSeq,self.secondSeq,self.outSeq)
         self.setPolarizedDivergenceList(result['Species One DN'],result['Species One DS'],
@@ -177,18 +194,107 @@ class protein(object):
             self.clusteringIntronHolder['DNDN'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
             tempHolder = clust.clusteringSameMutationIntrons(self.DSLists,self.intronPositions,self.seqLength/3,num_simulations)
             self.clusteringIntronHolder['DSDS'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
-        #if calculatePolarized:
-        #    self.polarizedIntronClusteringHolder = dict()
-        #    try:
-        #        self.polarizedClusteringHolder
-        #    except AttributeError:
-        #        result = variantsByParsimony(self.firstSeq,self.secondSeq,self.outSeq)
-        #        self.setPolarizedDivergenceList(result['Species One DN'],result['Species One DS'],
-        #                                        result['Species Two DN'],result['Species Two DS'])
-        #    tempHolder = clust.clusteringSameMutationIntrons(self.speciesOneDN,self.intronPositions,self.seqLength/3,num_simulations)
-        #    self.polarizedIntronClusteringHolder['DNDN1'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
-        #    tempHolder = clust.clusteringSameMutationIntrons(self.speciesTwoDN,self.intronPositions,self.seqLength/3,num_simulations)
-        #    self.polarizedIntronClusteringHolder['DNDN2'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
+            #tempHolder = clust.clusteringDifferentMutationIntrons(self.DNLists,self.DSLists,self.intronPositions,self.seqLength/3,num_simulations)
+            #self.clusteringIntronHolder['DNDS'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
+        if calculatePolarized:
+            self.polarizedIntronClusteringHolder = dict()
+            try:
+                self.polarizedClusteringHolder
+            except AttributeError:
+                result = variantsByParsimony(self.firstSeq,self.secondSeq,self.outSeq)
+                self.setPolarizedDivergenceList(result['Species One DN'],result['Species One DS'],
+                                                result['Species Two DN'],result['Species Two DS'])
+            tempHolder = clust.clusteringSameMutationIntrons(self.speciesOneDN,self.intronPositions,self.seqLength/3,num_simulations)
+            self.polarizedIntronClusteringHolder['DNDN1'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
+            tempHolder = clust.clusteringSameMutationIntrons(self.speciesTwoDN,self.intronPositions,self.seqLength/3,num_simulations)
+            self.polarizedIntronClusteringHolder['DNDN2'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
+            #tempHolder = clust.clusteringDifferentMutationIntrons(self.speciesOneDN,self.speciesTwoDN,self.intronPositions,self.seqLength/3,num_simulations)
+            #self.polarizedIntronClusteringHolder['DNDNcross'] = clusteringObject(tempHolder['data'],tempHolder['norm'])
+    
+    def removePolymorphicSites(self,whichSpecies,MAFthresh):
+        # This is not meant to be run alone; it's a helper function for geneClusteringFixedDiff
+        if whichSpecies == 1:
+            tempDNList = self.speciesOneDN
+            tempDSList = self.speciesOneDS
+            popSeqHolder = self.speciesOnePopHolder
+            tempSequence = self.firstSeq
+        if whichSpecies == 2:
+            tempDNList = self.speciesTwoDN
+            tempDSList = self.speciesTwoDS
+            popSeqHolder = self.speciesTwoPopHolder
+            tempSequence = self.secondSeq 
+        refArrayDN = [str(tempSequence[x:x+3].translate()) for x in tempDNList]
+        refArrayDS = [str(tempSequence[x:x+3]) for x in tempDSList]
+        refMatchCountDN = [0 for x in refArrayDN]
+        notMissingCounterDN = [0 for x in refArrayDN]
+        refMatchCountDS = [0 for x in refArrayDS]
+        notMissingCounterDS = [0 for x in refArrayDS]
+        for currSeq in popSeqHolder:
+            for i,index in enumerate(tempDNList):
+                if 'N' not in str(popSeqHolder[currSeq][index:index+3]):
+                    notMissingCounterDN[i] += 1
+                if str(popSeqHolder[currSeq][index:index+3].translate()) == refArrayDN[i]:
+                    refMatchCountDN[i] += 1
+            for i,index in enumerate(tempDSList):
+                if 'N' not in str(popSeqHolder[currSeq][index:index+3]):
+                    notMissingCounterDS[i] += 1
+                if str(popSeqHolder[currSeq][index:index+3]) == refArrayDS[i]:
+                    refMatchCountDS[i] += 1
+        tempDNList = [x[2] for x in zip(refMatchCountDN,notMissingCounterDN,tempDNList) if x[1] > 0 and float(x[0])/x[1] > (1 - MAFthresh)]
+        tempDSList = [x[2] for x in zip(refMatchCountDS,notMissingCounterDS,tempDSList) if x[1] > 0 and float(x[0])/x[1] > (1 - MAFthresh)]
+        if whichSpecies == 1:
+            self.speciesOneDN = tempDNList
+            self.speciesOneDS = tempDSList
+        if whichSpecies == 2:
+            self.speciesTwoDN = tempDNList
+            self.speciesTwoDS = tempDSList
+    
+    def geneClusteringFixedDiff(self,length = 50, MAFFilter = 0.05, skipVariantFinding = False):
+        # This can, and should be run alone, if you do something weird and run this and then manually run the other clustering
+        # functions/methods, you'll have big problems (though if you run processGene after this, that'll overwrite everything)
+        
+        if not skipVariantFinding:
+            self.seqLength = len(self.firstSeq)
+            result = clust.variantsByParsimony(self.firstSeq,self.secondSeq,self.outSeq)
+            self.setPolarizedDivergenceList(result['Species One DN'],result['Species One DS'],
+                                            result['Species Two DN'],result['Species Two DS'])
+        
+        if self.speciesOnePopHolder != None:
+            self.removePolymorphicSites(1,MAFFilter)
+        if self.speciesTwoPopHolder != None:
+            self.removePolymorphicSites(2,MAFFilter)
+        
+        temp_data = clust.clusteringSameMutation(self.speciesOneDN)
+        temp_norm = clust.analyticalNormSameMut(len(self.speciesOneDN),self.seqLength/3)
+        self.polarizedClusteringHolder['DNDN1'] = clusteringObject(temp_data,temp_norm)
+        
+        temp_data = clust.clusteringSameMutation(self.speciesTwoDN)
+        temp_norm = clust.analyticalNormSameMut(len(self.speciesTwoDN),self.seqLength/3)
+        self.polarizedClusteringHolder['DNDN2'] = clusteringObject(temp_data,temp_norm)
+        
+        temp_data = clust.clusteringDifferentMutation(self.speciesOneDN,self.speciesTwoDN)
+        temp_norm = clust.analyticalNormDiffMut(len(self.speciesOneDN),len(self.speciesTwoDN),self.seqLength/3)
+        self.polarizedClusteringHolder['DNDNcross'] = clusteringObject(temp_data,temp_norm)
+        
+        return self.geneClustering(length)
+    
+    def geneClustering(self,length=50):
+        # This shouldn't really be used if population data is available. The method "geneClusteringFixedDiff" 
+        # removes fixed differences from the alignment
+        # This must be run after "processGene"
+        speciesOneClustering = sum(self.polarizedClusteringHolder['DNDN1'].data[1:length+1])
+        speciesOneNorm = sum(self.polarizedClusteringHolder['DNDN1'].norm[1:length+1])
+        speciesTwoClustering = sum(self.polarizedClusteringHolder['DNDN2'].data[1:length+1])
+        speciesTwoNorm = sum(self.polarizedClusteringHolder['DNDN2'].norm[1:length+1])
+        betweenSpeciesClustering = sum(self.polarizedClusteringHolder['DNDNcross'].data[1:length+1])
+        betweenSpeciesNorm = sum(self.polarizedClusteringHolder['DNDNcross'].norm[1:length+1])
+        
+        if speciesOneNorm == 0: speciesOneNorm = 1
+        if speciesTwoNorm == 0: speciesTwoNorm = 1
+        if betweenSpeciesNorm == 0: betweenSpeciesNorm = 1
+        
+        return([speciesOneClustering/speciesOneNorm - betweenSpeciesClustering/betweenSpeciesNorm,
+            speciesTwoClustering/speciesTwoNorm - betweenSpeciesClustering/betweenSpeciesNorm])
 
     def geneClusteringIntrons(self,length=50):
         speciesOneClustering = sum(self.polarizedIntronClusteringHolder['DNDN1'].data[1:length+1])
@@ -234,14 +340,14 @@ class genomeWideClustering(object):
         self.speciesOutName = speciesOutName
         
         self.nonPolarizedDNDNClustering = numpy.zeros(clusteringLength + 1)
-        #self.nonPolarizedDNDSClustering = numpy.zeros(clusteringLength + 1)
+        self.nonPolarizedDNDSClustering = numpy.zeros(clusteringLength + 1)
         self.nonPolarizedDSDSClustering = numpy.zeros(clusteringLength + 1)
         self.speciesOneDNDNClustering = numpy.zeros(clusteringLength + 1)
         self.speciesTwoDNDNClustering = numpy.zeros(clusteringLength + 1)
         self.btwnDNDNClustering = numpy.zeros(clusteringLength + 1)
 
         self.nonPolarizedDNDNClusteringNorm = numpy.zeros(clusteringLength + 1)
-        #self.nonPolarizedDNDSClusteringNorm = numpy.zeros(clusteringLength + 1)
+        self.nonPolarizedDNDSClusteringNorm = numpy.zeros(clusteringLength + 1)
         self.nonPolarizedDSDSClusteringNorm = numpy.zeros(clusteringLength + 1)
         self.speciesOneDNDNClusteringNorm = numpy.zeros(clusteringLength + 1)
         self.speciesTwoDNDNClusteringNorm = numpy.zeros(clusteringLength + 1)
@@ -269,10 +375,10 @@ class genomeWideClustering(object):
         self.btwnPolarityClusteringRein = numpy.zeros(clusteringLength + 1)
         
         self.nonPolarizedDNDNIntronClustering = numpy.zeros(clusteringLength + 1)
-        #self.nonPolarizedDNDSIntronClustering = numpy.zeros(clusteringLength + 1)
+        self.nonPolarizedDNDSIntronClustering = numpy.zeros(clusteringLength + 1)
         self.nonPolarizedDSDSIntronClustering = numpy.zeros(clusteringLength + 1)
         self.nonPolarizedDNDNIntronClusteringNorm = numpy.zeros(clusteringLength + 1)
-        #self.nonPolarizedDNDSIntronClusteringNorm = numpy.zeros(clusteringLength + 1)
+        self.nonPolarizedDNDSIntronClusteringNorm = numpy.zeros(clusteringLength + 1)
         self.nonPolarizedDSDSIntronClusteringNorm = numpy.zeros(clusteringLength + 1)
         
         self.nonPolarizedDNDNIntronSimulation = []
@@ -293,8 +399,8 @@ class genomeWideClustering(object):
         self.nonPolarizedDNDNClusteringNorm += currProtein.clusteringHolder['DNDN'].norm
         self.nonPolarizedDSDSClustering += currProtein.clusteringHolder['DSDS'].data
         self.nonPolarizedDSDSClusteringNorm += currProtein.clusteringHolder['DSDS'].norm
-        #self.nonPolarizedDNDSClustering += currProtein.clusteringHolder['DNDS'].data
-        #self.nonPolarizedDNDSClusteringNorm += currProtein.clusteringHolder['DNDS'].norm
+        self.nonPolarizedDNDSClustering += currProtein.clusteringHolder['DNDS'].data
+        self.nonPolarizedDNDSClusteringNorm += currProtein.clusteringHolder['DNDS'].norm
         
         self.speciesOneDNDNClustering += currProtein.polarizedClusteringHolder['DNDN1'].data
         self.speciesOneDNDNClusteringNorm += currProtein.polarizedClusteringHolder['DNDN1'].norm
@@ -336,30 +442,30 @@ class genomeWideClustering(object):
             
     def calcNonPolarized(self, smooth = True , normalizeAsym = False):
         DNDN = self.nonPolarizedDNDNClustering/self.nonPolarizedDNDNClusteringNorm
-        #DNDS = self.nonPolarizedDNDSClustering/self.nonPolarizedDNDSClusteringNorm
+        DNDS = self.nonPolarizedDNDSClustering/self.nonPolarizedDNDSClusteringNorm
         DSDS = self.nonPolarizedDSDSClustering/self.nonPolarizedDSDSClusteringNorm
         if normalizeAsym:
             DNDN = DNDN/numpy.mean(DNDN[80:121])
-            #DNDS = DNDS/numpy.mean(DNDS[80:121])
+            DNDS = DNDS/numpy.mean(DNDS[80:121])
             DSDS = DSDS/numpy.mean(DSDS[80:121])
         if smooth:
             DNDN = [0] + clust.windowSmoothing(DNDN[1:])
-            #DNDS = [0] + clust.windowSmoothing(DNDS[1:])
+            DNDS = [0] + clust.windowSmoothing(DNDS[1:])
             DSDS = [0] + clust.windowSmoothing(DSDS[1:])
-        return {'DNDN':DNDN,'DSDS':DSDS}
+        return {'DNDN':DNDN,'DNDS':DNDS,'DSDS':DSDS}
     
     def plotNonPolarized(self,plotTitle = None, showLegend = True, normalizeAsym = False, minMaxX = (0,100), plotIntron = False, saveFigure = None, ax = None, plotDNDS = True):
         if not plotIntron:
             DNDN = self.nonPolarizedDNDNClustering/self.nonPolarizedDNDNClusteringNorm
-            #DNDS = self.nonPolarizedDNDSClustering/self.nonPolarizedDNDSClusteringNorm
+            DNDS = self.nonPolarizedDNDSClustering/self.nonPolarizedDNDSClusteringNorm
             DSDS = self.nonPolarizedDSDSClustering/self.nonPolarizedDSDSClusteringNorm
         if plotIntron:
             DNDN = self.nonPolarizedDNDNIntronClustering/self.nonPolarizedDNDNIntronClusteringNorm
-            #DNDS = self.nonPolarizedDNDSIntronClustering/self.nonPolarizedDNDSIntronClusteringNorm
+            DNDS = self.nonPolarizedDNDSIntronClustering/self.nonPolarizedDNDSIntronClusteringNorm
             DSDS = self.nonPolarizedDSDSIntronClustering/self.nonPolarizedDSDSIntronClusteringNorm
         if normalizeAsym:
             DNDN = DNDN/numpy.mean(DNDN[80:121])
-            #DNDS = DNDS/numpy.mean(DNDS[80:121])
+            DNDS = DNDS/numpy.mean(DNDS[80:121])
             DSDS = DSDS/numpy.mean(DSDS[80:121])
         if plotDNDS:
             minY = min([min(clust.windowSmoothing(DNDN[1:])[minMaxX[0]:minMaxX[1]]),min(clust.windowSmoothing(DSDS[1:])[minMaxX[0]:minMaxX[1]])])
@@ -374,9 +480,9 @@ class genomeWideClustering(object):
         ax.plot(range(1,501),clust.windowSmoothing(DSDS[1:]),color='blue',label='DSDS', linewidth = 1.5)
         ax.scatter(range(1,501),DNDN[1:],color = 'green', alpha = 0.5, marker = '+', s = 18, linewidth = 1)
         ax.scatter(range(1,501),DSDS[1:],color = 'blue', alpha = 0.5, marker = '+', s = 18, linewidth = 1)
-        #if plotDNDS:
-        #    ax.plot(range(1,501),clust.windowSmoothing(DNDS[1:]),color='orange',label='DNDS', linewidth = 1.5)
-        #    ax.scatter(range(1,501),DNDS[1:],color = 'orange', alpha = 0.5, marker = '+', s = 18, linewidth = 1)
+        if plotDNDS:
+            ax.plot(range(1,501),clust.windowSmoothing(DNDS[1:]),color='orange',label='DNDS', linewidth = 1.5)
+            ax.scatter(range(1,501),DNDS[1:],color = 'orange', alpha = 0.5, marker = '+', s = 18, linewidth = 1)
         ax.set(xlim = (minMaxX[0],minMaxX[1]),ylim = (minY*.9,maxY*1.1))
         if showLegend:
             ax.legend()
@@ -552,9 +658,9 @@ class genomeWideClustering(object):
         if clustType == 'DNDN':
             clustObs = self.nonPolarizedDNDNClustering
             clustNorm = self.nonPolarizedDNDNClusteringNorm
-        #elif clustType == 'DNDS':
-        #    clustObs = self.nonPolarizedDNDSClustering
-        #    clustNorm = self.nonPolarizedDNDSClusteringNorm
+        elif clustType == 'DNDS':
+            clustObs = self.nonPolarizedDNDSClustering
+            clustNorm = self.nonPolarizedDNDSClusteringNorm
         elif clustType == 'DSDS':
             clustObs = self.nonPolarizedDSDSClustering
             clustNorm = self.nonPolarizedDSDSClusteringNorm
@@ -605,7 +711,7 @@ class genomeWideClustering(object):
     def clusteringExcess(self,NPorP,length=30):
         if NPorP == "Nonpolarized":
             DNDN = self.nonPolarizedDNDNClustering/self.nonPolarizedDNDNClusteringNorm
-            #DNDS = self.nonPolarizedDNDSClustering/self.nonPolarizedDNDSClusteringNorm
+            DNDS = self.nonPolarizedDNDSClustering/self.nonPolarizedDNDSClusteringNorm
             DSDS = self.nonPolarizedDSDSClustering/self.nonPolarizedDSDSClusteringNorm
             #DNDN = DNDN/numpy.mean(DNDN[80:121])
             #DNDS = DNDS/numpy.mean(DNDS[80:121])
@@ -614,10 +720,9 @@ class genomeWideClustering(object):
             #DNDS_excess = sum(DNDS[1:length+1]-1)
             #DSDS_excess = sum(DSDS[1:length-1]-1)
             DNDN_excess = sum(DNDN[1:length+1]-numpy.mean(DNDN[80:121]))
-            #DNDS_excess = sum(DNDS[1:length+1]-numpy.mean(DNDS[80:121]))
+            DNDS_excess = sum(DNDS[1:length+1]-numpy.mean(DNDS[80:121]))
             DSDS_excess = sum(DSDS[1:length-1]-numpy.mean(DSDS[80:121]))
-            #return {"DNDN":DNDN_excess,"DNDS":DNDS_excess,"DSDS":DSDS_excess}
-            return {"DNDN":DNDN_excess,"DSDS":DSDS_excess}
+            return {"DNDN":DNDN_excess,"DNDS":DNDS_excess,"DSDS":DSDS_excess}
         elif NPorP == "Polarized":
             DNDN1 = self.speciesOneDNDNClustering/self.speciesOneDNDNClusteringNorm
             DNDN2 = self.speciesTwoDNDNClustering/self.speciesTwoDNDNClusteringNorm
@@ -687,4 +792,7 @@ class genomeWideClustering(object):
             print("Unknown type selected")
             return
     
-
+        
+class version():
+    def getVersion():
+        print("3")
